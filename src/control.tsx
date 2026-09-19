@@ -11,6 +11,7 @@ import { start } from "./device/controller";
 import { isBeforeLaunch } from "./launch";
 import { mountOfflineBanner } from "./offline-banner";
 import { registerServiceWorker } from "./register-sw";
+import { startSelfXssGuard } from "./self-xss-guard";
 import { MIN_HEIGHT, MIN_WIDTH, useViewportTooSmall } from "./app/useViewportTooSmall";
 import { usePresence } from "./app/usePresence";
 
@@ -30,6 +31,7 @@ function isChromium(): boolean {
 
 registerServiceWorker();
 mountOfflineBanner();
+if (import.meta.env.PROD) startSelfXssGuard();
 
 function LaunchHero(): ReactNode {
   return (

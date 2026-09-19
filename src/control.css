@@ -2713,6 +2713,7 @@ body { height: 100vh; overflow: hidden; }
   color: var(--bright);
   min-height: 1.25em;
   display: -webkit-box;
+  line-clamp: 2;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
