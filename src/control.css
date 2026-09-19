@@ -2195,7 +2195,8 @@ body { height: 100vh; overflow: hidden; }
   width: 100%;
   max-width: 1000px;
   margin: 0 auto;
-  padding: 0 0 2rem;
+  /*padding: 0 0 2rem;*/
+  /* So does with this padding */
 }
 .welcome-with-devices .device-grid {
   grid-template-columns: repeat(auto-fit, minmax(340px, 420px));
@@ -2428,7 +2429,10 @@ body { height: 100vh; overflow: hidden; }
   min-height: 0;
 }
 .control-shell > .full-desktop-main > .full-desktop-content {
+  display: flex;
+  flex-direction: column;
   flex: 1;
+  justify-content: center;
   min-height: 0;
   overflow-y: auto;
   padding: 1rem 2rem 2rem;
@@ -2439,9 +2443,10 @@ body { height: 100vh; overflow: hidden; }
 /* Dashboard tab rail sits at the very top of the scroll container, with the
    same 0.55rem headroom as the app-sidebar's top margin. Offset the shared
    1rem inset here so it stays, and give the rail its own dedicated padding. */
-.full-desktop-shell .full-desktop-content > .page-overview {
+/* The margin-top -1rem makes the grid look really offset. */
+/* .full-desktop-shell .full-desktop-content > .page-overview {
   margin-top: -1rem;
-}
+} */
 .full-desktop-shell .device-tabs-bar {
   padding-top: 0.55rem;
 }
