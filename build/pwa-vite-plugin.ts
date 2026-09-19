@@ -7,6 +7,7 @@ import type { Plugin } from "vite";
  */
 const STATIC_PRECACHE = [
   "/manifest.webmanifest",
+  "/theme-init.js",
   "/favicon.ico",
   "/favicon-32.png",
   "/apple-touch-icon.png",

@@ -32,6 +32,7 @@ export function App(): ReactNode {
   const { preferences, status } = snapshot;
   const locale = preferences.locale;
 
+
   const showingSettings = page === "settings" || snapshot.interfaceSettingsOpen;
 
   const resolvedPage: DesktopPage = showingSettings
@@ -67,6 +68,7 @@ export function App(): ReactNode {
     // re-render once it arrives instead of sticking on fallback strings.
     if (locale !== "en") void ensureLocale(locale).then(() => control.refreshInterface());
   }, [locale]);
+
 
   useEffect(() => {
     panel.current?.scrollTo({ top: 0, behavior: preferences.reducedMotion ? "auto" : "smooth" });

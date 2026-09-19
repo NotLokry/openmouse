@@ -503,14 +503,18 @@ const TOAST_TIMEOUT_MS: Record<ToastKind, number> = {
 const TOAST_LIMIT = 4;
 const TOAST_EXIT_MS = 180;
 
-export function pushToast(kind: ToastKind, title: string, detail?: string): void {
+type ToastOptions = Pick<Toast, "action" | "prominent" | "persistent">;
+
+class ChromeRazerAccessError extends Error {}
+
+export function pushToast(kind: ToastKind, title: string, detail?: string, options: ToastOptions = {}): void {
   const duplicate = toasts.findIndex((entry) => entry.kind === kind && entry.title === title);
   if (duplicate !== -1) toasts.splice(duplicate, 1);
 
   const id = nextToastId++;
-  toasts.unshift({ id, kind, title, detail });
+  toasts.unshift({ id, kind, title, detail, ...options });
   if (toasts.length > TOAST_LIMIT) toasts.length = TOAST_LIMIT;
-  window.setTimeout(() => dismissToast(id), TOAST_TIMEOUT_MS[kind]);
+  if (!options.persistent) window.setTimeout(() => dismissToast(id), TOAST_TIMEOUT_MS[kind]);
   emit();
 }
 
@@ -528,6 +532,22 @@ export function dismissToast(id: number): void {
 }
 
 function toastForError(title: string, error: unknown): void {
+  if (error instanceof ChromeRazerAccessError) {
+    pushToast(
+      "error",
+      "Chrome 153 blocks this Razer mouse",
+      "This is a confirmed Chrome change, not a problem with your mouse. See the temporary workaround and project status.",
+      {
+        action: {
+          label: "See workaround & status",
+          href: "https://openmouse.app/blog-razer-windows-chrome-153",
+        },
+        prominent: true,
+        persistent: true,
+      },
+    );
+    return;
+  }
   pushToast("error", title, error instanceof Error ? error.message : title);
 }
 
@@ -1743,6 +1763,10 @@ async function activateClientNow(client: SupportedClient): Promise<void> {
       lastSleepSeconds = status.sleepTimeout ?? keychron.getSleepOptions()[0] ?? 60;
     }
     deviceStatuses.set(client.device, status);
+    // Optional setters/getters are runtime capabilities of the selected
+    // client. Populate them before rendering so controls such as RAWM angle
+    // tuning are editable on the first status snapshot.
+    capabilities = readCapabilities();
     applyStatus(status);
     await readButtons();
     await loadNapeKeymap(status.napeLayer ?? editedNapeLayer ?? 1);
@@ -1960,14 +1984,16 @@ async function requestSupportedClient(): Promise<SupportedClient | null> {
       + "pre-153 Chromium build for this app instead of your regular Chrome."
     : "";
 
-  throw new Error(
+  const unsupportedMessage = (
     `Selected device is not a supported control interface (${details})`
     + (probedRazer ? ` [probed ${razerCandidates.length} Razer collection(s), none answered]` : "")
     + `. `
     + "Pick a vendor control interface (not a plain boot mouse). "
     + "If this keeps failing, note the VID/PID from this message."
-    + chromeRegressionHint,
+    + chromeRegressionHint
   );
+  if (probedRazer && chrome153Plus) throw new ChromeRazerAccessError(unsupportedMessage);
+  throw new Error(unsupportedMessage);
 }
 
 export async function connect(): Promise<void> {

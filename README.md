@@ -68,6 +68,18 @@ stable GitHub release. It only retrieves the version, changelog, and download
 link; it never downloads or installs an update in the background. Users can
 also run the check manually.
 
+When Bridge is reachable, the control panel prefers its loopback native HID
+transport over browser WebHID. The same `@openmouse/protocol` drivers continue
+to handle device discovery and settings; Bridge only carries HID reports. This
+keeps Razer control interfaces protected by Chrome 153+ usable without relying
+on the browser's former protected-collection bypass.
+
+Bridge connection attempts, disconnects, request failures, scan durations, and
+device inventory changes are written to the browser console with the
+`[OpenMouse Bridge]` prefix. The same lifecycle events are included in the
+downloadable diagnostics from a connected device's **Advanced** panel; HID
+report payloads are not written to the console.
+
 The control panel is organized by responsibility: `control.ts` coordinates the
 application, while the template, events, DOM helpers, persisted preferences,
 battery history, device selection, and rendering live in focused modules under

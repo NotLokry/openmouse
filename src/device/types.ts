@@ -131,6 +131,12 @@ export interface Toast {
   kind: ToastKind;
   title: string;
   detail?: string;
+  action?: {
+    label: string;
+    href: string;
+  };
+  prominent?: boolean;
+  persistent?: boolean;
   leaving?: boolean;
 }
 

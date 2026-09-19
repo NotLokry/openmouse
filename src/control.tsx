@@ -61,10 +61,10 @@ const root = createRoot(controlApp);
 if (import.meta.env.PROD && isBeforeLaunch()) {
   root.render(<LaunchHero />);
 } else {
-  // A browser without WebHID can still reach a mouse through OpenMouse Bridge,
-  // so whether this browser is supported is only known once that has been tried.
-  // Bridge answers on loopback in a few milliseconds, or not at all.
-  void installBridgeHid().then((hasHid) => {
+  // Prefer Bridge when it is installed: native HID can reach protected mouse
+  // collections that Chrome 153+ correctly withholds from WebHID. If Bridge is
+  // absent, installation falls back to the browser's own WebHID implementation.
+  void installBridgeHid({ force: true }).then((hasHid) => {
     const notice = unsupportedNotice({
       hasWebHid: hasHid,
       handheld: window.matchMedia("(pointer: coarse) and (hover: none)").matches,

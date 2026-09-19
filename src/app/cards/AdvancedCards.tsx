@@ -396,20 +396,14 @@ export function ProcessingCard({ snapshot }: { snapshot: ControlSnapshot }): Rea
         onChange={(next) => control.applyPulsarToggle("longRangeMode", next)}
       />
       {angleTuning != null ? (
-        <label className="field-label spaced">
-          {t(locale, "adv.angleTune")}
-          {capabilities?.angleTuningWritable ? (
-            <select
-              id="angle-tune-select"
-              value={angleTuning}
-              onChange={(event) => control.applyAngleTuning(Number(event.currentTarget.value))}
-            >
-              {Array.from({ length: 61 }, (_, index) => index - 30).map((angle) => (
-                <option key={angle} value={angle}>{angle}°</option>
-              ))}
-            </select>
-          ) : <output id="angle-tune-value">{angleTuning}°</output>}
-        </label>
+        capabilities?.angleTuningWritable
+          ? <AngleTuningControl value={angleTuning} label={t(locale, "adv.angleTune")} />
+          : (
+            <div className="angle-tuning-readonly field-label spaced">
+              <span>{t(locale, "adv.angleTune")}</span>
+              <output id="angle-tune-value">{angleTuning}°</output>
+            </div>
+          )
       ) : null}
 
       {traits.teevolution && teevolutionProfile ? (
@@ -428,6 +422,44 @@ export function ProcessingCard({ snapshot }: { snapshot: ControlSnapshot }): Rea
         </label>
       ) : null}
     </article>
+  );
+}
+
+function AngleTuningControl({ value, label }: { value: number; label: string }): ReactNode {
+  const [dragging, setDragging] = useState<number | null>(null);
+  const shown = dragging ?? value;
+  const apply = (next: number): void => control.applyAngleTuning(Math.max(-30, Math.min(30, next)));
+
+  return (
+    <div className="angle-tuning-control" data-pending-key="angle-tuning">
+      <div className="angle-tuning-head">
+        <span>{label}</span>
+        <output id="angle-tune-value" htmlFor="angle-tune-slider">{shown > 0 ? "+" : ""}{shown}°</output>
+      </div>
+      <div className="angle-tuning-inputs">
+        <button type="button" aria-label={`${label}: decrease`} disabled={shown <= -30} onClick={() => apply(shown - 1)}>−</button>
+        <input
+          id="angle-tune-slider"
+          type="range"
+          min={-30}
+          max={30}
+          step={1}
+          value={shown}
+          aria-label={label}
+          aria-valuetext={`${shown} degrees`}
+          style={{ "--fill": `${((shown + 30) / 60) * 100}%` }}
+          onInput={(event) => setDragging(Number(event.currentTarget.value))}
+          onChange={(event) => {
+            const next = Number(event.currentTarget.value);
+            setDragging(null);
+            apply(next);
+          }}
+          onBlur={() => setDragging(null)}
+        />
+        <button type="button" aria-label={`${label}: increase`} disabled={shown >= 30} onClick={() => apply(shown + 1)}>+</button>
+      </div>
+      <div className="angle-tuning-scale" aria-hidden="true"><span>−30°</span><i>0°</i><span>+30°</span></div>
+    </div>
   );
 }
 

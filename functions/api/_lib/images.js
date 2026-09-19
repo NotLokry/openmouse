@@ -96,3 +96,46 @@ export function parseArtworkImage(bytes) {
   if (isWebp(bytes)) return readWebp(bytes);
   return null;
 }
+
+/** Scans PNG chunks for embedded camera EXIF metadata (eXIf). */
+function pngHasCameraMetadata(bytes) {
+  let offset = 8;
+  while (offset + 8 <= bytes.length) {
+    const length = be32(bytes, offset);
+    const type = String.fromCharCode(bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7]);
+    if (type === "eXIf") return true;
+    if (length <= 0 || offset + 12 + length > bytes.length) return false;
+    offset += 12 + length;
+  }
+  return false;
+}
+
+/** True when the PNG carries an alpha channel (grayscale+alpha or RGBA). */
+function pngHasAlpha(bytes) {
+  return bytes.length >= 26 && (bytes[25] === 4 || bytes[25] === 6);
+}
+
+/** Scans WebP chunks for embedded camera EXIF metadata (EXIF). */
+function webpHasCameraMetadata(bytes) {
+  let offset = 12;
+  while (offset + 8 <= bytes.length) {
+    const fourcc = String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
+    const length = le32(bytes, offset + 4);
+    if (fourcc === "EXIF") return true;
+    if (offset + 8 + length > bytes.length) return false;
+    offset += 8 + length + (length % 2);
+  }
+  return false;
+}
+
+/** Returns { exif, alpha } — whether the file embeds camera metadata
+    (strong evidence it is a converted photograph, not a render) and whether
+    a PNG alpha channel is present. Used by the strict screening gate. */
+export function probeArtworkMetadata(bytes) {
+  if (!bytes || bytes.length < 24) return { exif: false, alpha: false };
+  if (matchesSignature(bytes, PNG_SIGNATURE)) {
+    return { exif: pngHasCameraMetadata(bytes), alpha: pngHasAlpha(bytes) };
+  }
+  if (isWebp(bytes)) return { exif: webpHasCameraMetadata(bytes), alpha: false };
+  return { exif: false, alpha: false };
+}

@@ -1,15 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseArtworkImage } from "../functions/api/_lib/images.js";
+import { parseArtworkImage, probeArtworkMetadata } from "../functions/api/_lib/images.js";
 import {
   aiScreeningLabel,
   claimScreeningSlot,
-  parseScore,
   parseVerdict,
+  recordArtworkRejection,
   screeningDecision,
+  strictViolation,
 } from "../functions/api/artwork.js";
-
-const noVerify = async () => null;
 
 class FakeKV {
   store = new Map<string, string>();
@@ -21,8 +20,8 @@ class FakeKV {
   }
 }
 
-function verdictOf({ device = true, nsfw = 0, hate = 0, gore = 0, unrelated = 0 } = {}) {
-  return { device, issues: { nsfw, hate, gore }, unrelated };
+function verdictOf({ device = true, render = true, background = "white", nsfw = 0, hate = 0, gore = 0, unrelated = 0 } = {}) {
+  return { device, render, background, issues: { nsfw, hate, gore }, unrelated };
 }
 
 function pngBytes(width: number, height: number): Uint8Array {
@@ -58,6 +57,54 @@ function webpVp8lBytes(width: number, height: number): Uint8Array {
   return bytes;
 }
 
+/** PNG with a valid IHDR (width 512, height 256) followed by extra chunks,
+    each with its 4-byte CRC so the chunk walk finds them correctly. */
+function pngWithChunks(extraTypes: string[], alpha = true): Uint8Array {
+  const axes = alpha ? 6 : 2;
+  const crc = [0, 0, 0, 0];
+  const parts: Uint8Array[] = [
+    new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    new Uint8Array([0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 2, 0, 0, 0, 1, 0, 8, axes, 0, 0, 0, ...crc]),
+  ];
+  for (const type of extraTypes) {
+    parts.push(new Uint8Array([0, 0, 0, 5]));
+    parts.push(new Uint8Array([type.charCodeAt(0), type.charCodeAt(1), type.charCodeAt(2), type.charCodeAt(3)]));
+    parts.push(new Uint8Array([9, 9, 9, 9, 9]));
+    parts.push(new Uint8Array(crc));
+  }
+  const bytes = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    bytes.set(part, offset);
+    offset += part.length;
+  }
+  return bytes;
+}
+
+/** Minimal WebP container with an optional EXIF chunk appended after a
+    zero-length VP8L chunk (so the riff chunk walk reaches the EXIF chunk). */
+function webpWithExif(exif: boolean): Uint8Array {
+  const parts = [
+    new Uint8Array([0x52, 0x49, 0x46, 0x46]),
+    new Uint8Array([40, 0, 0, 0]),
+    new Uint8Array([0x57, 0x45, 0x42, 0x50]),
+    new Uint8Array([0x56, 0x50, 0x38, 0x4c]),
+    new Uint8Array([0, 0, 0, 0]),
+  ];
+  if (exif) {
+    parts.push(new Uint8Array([0x45, 0x58, 0x49, 0x46]));
+    parts.push(new Uint8Array([20, 0, 0, 0]));
+    parts.push(new Uint8Array(20));
+  }
+  const bytes = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    bytes.set(part, offset);
+    offset += part.length;
+  }
+  return bytes;
+}
+
 test("parseArtworkImage reads PNG dimensions from the IHDR chunk", () => {
   const info = parseArtworkImage(pngBytes(512, 256));
   assert.deepEqual(info, { format: "png", width: 512, height: 256 });
@@ -79,22 +126,44 @@ test("parseArtworkImage rejects out-of-range dimensions", () => {
   assert.equal(parseArtworkImage(pngBytes(9000, 9000)), null);
 });
 
+test("probeArtworkMetadata flags camera EXIF in a PNG", () => {
+  assert.deepEqual(probeArtworkMetadata(pngWithChunks(["tEXt"], true)), { exif: false, alpha: true });
+  assert.deepEqual(probeArtworkMetadata(pngWithChunks(["eXIf"], true)), { exif: true, alpha: true });
+  assert.deepEqual(probeArtworkMetadata(pngWithChunks(["eXIf"], false)), { exif: true, alpha: false });
+});
+
+test("probeArtworkMetadata flags camera EXIF in a WebP and reads PNG alpha", () => {
+  assert.deepEqual(probeArtworkMetadata(webpWithExif(false)), { exif: false, alpha: false });
+  assert.deepEqual(probeArtworkMetadata(webpWithExif(true)), { exif: true, alpha: false });
+  assert.deepEqual(probeArtworkMetadata(pngBytes(512, 256)), { exif: false, alpha: false });
+  assert.deepEqual(probeArtworkMetadata(pngWithChunks([], true)), { exif: false, alpha: true });
+});
+
 test("parseVerdict extracts scores from a bare model response", () => {
-  const text = '{"device": true, "issues": {"nsfw": 0.0, "hate": 0.0, "gore": 0.0}, "unrelated": 0.0}';
+  const text = '{"device": true, "render": true, "background": "transparent", "issues": {"nsfw": 0.0, "hate": 0.0, "gore": 0.0}, "unrelated": 0.0}';
   assert.deepEqual(parseVerdict(text), {
     device: true,
+    render: true,
+    background: "transparent",
     issues: { nsfw: 0, hate: 0, gore: 0 },
     unrelated: 0,
   });
 });
 
 test("parseVerdict strips code fences and clamps out-of-range scores", () => {
-  const text = 'Here:\n```json\n{"device": false, "issues": {"nsfw": 1.4, "hate": -3, "gore": 0.2}, "unrelated": "0.9"}\n```\nDone.';
+  const text = 'Here:\n```json\n{"device": false, "render": false, "background": "beige", "issues": {"nsfw": 1.4, "hate": -3, "gore": 0.2}, "unrelated": "0.9"}\n```\nDone.';
   assert.deepEqual(parseVerdict(text), {
     device: false,
+    render: false,
+    background: "other",
     issues: { nsfw: 1, hate: 0, gore: 0.2 },
     unrelated: 0.9,
   });
+});
+
+test("parseVerdict defaults an unstated background to other", () => {
+  const text = '{"device": true, "render": true, "issues": {"nsfw": 0, "hate": 0, "gore": 0}, "unrelated": 0}';
+  assert.equal(parseVerdict(text)?.background, "other");
 });
 
 test("parseVerdict returns null for non-JSON output", () => {
@@ -102,83 +171,80 @@ test("parseVerdict returns null for non-JSON output", () => {
   assert.equal(parseVerdict(""), null);
 });
 
-test("parseScore reads a verification score and rejects noise", () => {
-  assert.equal(parseScore('{"score": 0.93}'), 0.93);
-  assert.equal(parseScore('Sure:\n{"score": 0.5}\n'), 0.5);
-  assert.equal(parseScore("I won't review this."), null);
+test("strictViolation names the first broken guideline", () => {
+  assert.equal(strictViolation(verdictOf()), null);
+  assert.equal(strictViolation(verdictOf({ nsfw: 0.4 })), "nsfw");
+  assert.equal(strictViolation(verdictOf({ device: false })), "notArtwork");
+  assert.equal(strictViolation(verdictOf({ unrelated: 0.7 })), "notArtwork");
+  assert.equal(strictViolation(verdictOf({ render: false })), "photo");
+  assert.equal(strictViolation(verdictOf({ device: null })), "unconfirmed");
+  assert.equal(strictViolation(verdictOf({ render: null })), "unconfirmed");
+  assert.equal(strictViolation(verdictOf({ background: "other" })), "background");
+  assert.equal(strictViolation(null), "unconfirmed");
 });
 
-test("screeningDecision approves clean artwork", async () => {
-  assert.deepEqual(await screeningDecision(verdictOf(), noVerify), { action: "approve", reasons: [] });
+test("screeningDecision approves only when both independent passes comply", () => {
+  const clean = verdictOf();
+  assert.deepEqual(screeningDecision(clean, clean), { action: "approve", reasons: [] });
+  assert.deepEqual(screeningDecision(clean, null), { action: "reject", reason: "unconfirmed" });
+  assert.deepEqual(screeningDecision(null, clean), { action: "reject", reason: "unconfirmed" });
 });
 
-test("screeningDecision rejects a hard category only when the independent pass confirms it", async () => {
+test("screeningDecision rejects a hard category from either pass", () => {
   const verdict = verdictOf({ nsfw: 0.95 });
-  assert.deepEqual(await screeningDecision(verdict, async () => 0.93), {
-    action: "reject",
-    reason: "nsfw",
-  });
-  assert.deepEqual(await screeningDecision(verdict, async () => 0.2), {
-    action: "flag",
-    reasons: ["disputed:nsfw"],
-  });
-  assert.deepEqual(await screeningDecision(verdict, noVerify), {
-    action: "flag",
-    reasons: ["disputed:nsfw"],
-  });
+  assert.deepEqual(screeningDecision(verdict, verdictOf()), { action: "reject", reason: "nsfw" });
+  assert.deepEqual(screeningDecision(verdictOf(), verdict), { action: "reject", reason: "nsfw" });
 });
 
-test("screeningDecision picks the top hard category by score", async () => {
+test("screeningDecision picks the top hard category by score", () => {
   const verdict = verdictOf({ nsfw: 0.3, hate: 0.97, gore: 0.9 });
-  const confirmed = await screeningDecision(verdict, async () => 0.97);
-  assert.equal(confirmed.action, "reject");
-  assert.equal(confirmed.reason, "hate");
+  const decision = screeningDecision(verdict, verdict);
+  assert.equal(decision.action, "reject");
+  assert.equal(decision.reason, "hate");
 });
 
-test("screeningDecision rejects junk only when unrelated is high, not a device, and confirmed", async () => {
-  const verdict = verdictOf({ device: false, unrelated: 0.95 });
-  assert.deepEqual(await screeningDecision(verdict, async () => 0.96), {
+test("screeningDecision rejects non-device imagery with no second chance", () => {
+  const animeFace = verdictOf({ device: false, unrelated: 0.95 });
+  assert.deepEqual(screeningDecision(animeFace, verdictOf()), { action: "reject", reason: "notArtwork" });
+  assert.deepEqual(screeningDecision(verdictOf(), animeFace), { action: "reject", reason: "notArtwork" });
+});
+
+test("screeningDecision rejects photographs", () => {
+  const photo = verdictOf({ render: false });
+  assert.deepEqual(screeningDecision(photo, verdictOf()), { action: "reject", reason: "photo" });
+  assert.deepEqual(screeningDecision(verdictOf(), photo), { action: "reject", reason: "photo" });
+});
+
+test("screeningDecision rejects non-conforming backgrounds", () => {
+  const busyBackground = verdictOf({ background: "other" });
+  assert.deepEqual(screeningDecision(busyBackground, verdictOf()), { action: "reject", reason: "background" });
+  assert.deepEqual(screeningDecision(verdictOf(), busyBackground), { action: "reject", reason: "background" });
+});
+
+test("screeningDecision approves through a weak unrelated signal, flags a moderate one", () => {
+  assert.equal(screeningDecision(verdictOf({ unrelated: 0.4 }), verdictOf()).action, "approve");
+  assert.deepEqual(screeningDecision(verdictOf({ unrelated: 0.6 }), verdictOf()), {
     action: "reject",
-    reason: "junk",
-  });
-  assert.deepEqual(await screeningDecision(verdict, async () => 0.5), {
-    action: "flag",
-    reasons: ["disputed:unrelated"],
+    reason: "notArtwork",
   });
 });
 
-test("screeningDecision approves through a weak unrelated signal while a moderate one flags for review", async () => {
-  const verdict = verdictOf({ device: true, unrelated: 0.4 });
-  assert.deepEqual(await screeningDecision(verdict, async () => 0.4), {
-    action: "approve",
-    reasons: [],
+test("screeningDecision never approves an uncertain device or render read", () => {
+  assert.deepEqual(screeningDecision(verdictOf({ device: null }), verdictOf()), {
+    action: "reject",
+    reason: "unconfirmed",
   });
-  const flagVerdict = verdictOf({ device: true, unrelated: 0.6 });
-  assert.deepEqual(await screeningDecision(flagVerdict, noVerify), {
-    action: "flag",
-    reasons: ["unrelated"],
+  assert.deepEqual(screeningDecision(verdictOf({ render: null }), verdictOf()), {
+    action: "reject",
+    reason: "unconfirmed",
   });
 });
 
-test("screeningDecision flags, never blocks, a missing device read", async () => {
-  const verdict = verdictOf({ device: false, unrelated: 0.3 });
-  const decision = await screeningDecision(verdict, noVerify);
-  assert.equal(decision.action, "flag");
-  assert.notEqual(decision.reason, "junk");
-});
-
-test("screeningDecision flags moderate hard-category scores for the review queue", async () => {
-  const verdict = verdictOf({ nsfw: 0.55 });
-  assert.deepEqual(await screeningDecision(verdict, noVerify), {
-    action: "flag",
-    reasons: ["nsfw"],
-  });
-});
-
-test("screeningDecision flags a missing verdict rather than dropping it", async () => {
-  assert.deepEqual(await screeningDecision(null, noVerify), {
-    action: "flag",
-    reasons: ["no-verdict"],
+test("screeningDecision rejects a missing verdict rather than dropping it", () => {
+  assert.deepEqual(screeningDecision(null), { action: "reject", reason: "unconfirmed" });
+  assert.deepEqual(screeningDecision(verdictOf(), verdictOf({ device: false })), {
+    action: "reject",
+    reason: "notArtwork",
   });
 });
 
@@ -230,4 +296,34 @@ test("aiScreeningLabel describes every handling path", () => {
     aiScreeningLabel(true, { action: "flag", reasons: ["nsfw", "unrelated"] }),
     "Flagged for review — nsfw, unrelated",
   );
+});
+
+test("recordArtworkRejection stays calm before the ban threshold", async () => {
+  const kv = new FakeKV();
+  const count = await recordArtworkRejection(kv, "203.0.113.7");
+  assert.equal(count, 1);
+  assert.equal(await kv.get("ban:203.0.113.7"), null);
+});
+
+test("six rejected submissions from one IP permanently ban it", async () => {
+  const kv = new FakeKV();
+  let last = 0;
+  for (let i = 0; i < 6; i++) {
+    last = await recordArtworkRejection(kv, "203.0.113.8");
+  }
+  assert.equal(last, 6);
+  assert.equal(await kv.get("ban:203.0.113.8"), "artwork");
+});
+
+test("recordArtworkRejection is a no-op without KV and cannot throw", async () => {
+  const broken = {
+    get: async () => {
+      throw new Error("kv down");
+    },
+    put: async () => {
+      throw new Error("kv down");
+    },
+  };
+  assert.equal(await recordArtworkRejection(null, "203.0.113.9"), 0);
+  assert.equal(await recordArtworkRejection(broken, "203.0.113.9"), 0);
 });

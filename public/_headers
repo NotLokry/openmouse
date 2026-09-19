@@ -1,0 +1,34 @@
+# Security headers for the deployed control app (Cloudflare Pages).
+#
+# `_headers` is applied to the static assets Pages serves. Pages Functions
+# responses (e.g. /api/*, the IP-ban screen) are not covered here — the
+# middleware in `functions/_middleware.js` applies the same canonical set,
+# sourced from `functions/_lib/security-headers.js`. Keep the two in lockstep;
+# `src/security-headers.test.ts` fails the build if they drift.
+#
+# The app ships no inline scripts (the theme bootstrap is a separate file,
+# public/theme-init.js) and sets element styles through the CSSOM, so script-src
+# and style-src need no 'unsafe-inline'. `require-trusted-types-for 'script'`
+# is enforced against the single "openmouse" policy created in
+# `src/trusted-types.ts`.
+#
+# `upgrade-insecure-requests` is deliberately absent. It would rewrite the
+# loopback OpenMouse Bridge origin (http://127.0.0.1:17846) to https and break
+# communication with local hardware.
+#
+# `Cross-Origin-Embedder-Policy` is deliberately absent. See the comment in
+# functions/_lib/security-headers.js: the service worker caches third-party
+# Google Fonts as opaque responses, which COEP would block, and cross-origin
+# isolation buys the app nothing it needs.
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; script-src-attr 'none'; style-src 'self' https://fonts.googleapis.com; style-src-attr 'none'; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https://img.openmouse.app http://127.0.0.1:17846; media-src 'self'; connect-src 'self' https://api.github.com https://cdn.jsdelivr.net http://127.0.0.1:17846 ws://127.0.0.1:17846; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types openmouse
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: accelerometer=(), ambient-light-sensor=(), autoplay=(self), browsing-topics=(), camera=(), clipboard-read=(), clipboard-write=(self), display-capture=(), encrypted-media=(), fullscreen=(), gamepad=(), geolocation=(), gyroscope=(), interest-cohort=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
+  X-Permitted-Cross-Domain-Policies: none
+  X-XSS-Protection: 0

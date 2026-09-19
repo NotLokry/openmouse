@@ -43,6 +43,7 @@ test("drives a device end to end over the socket", async () => {
 
   const [device] = await listing;
   assert.equal(device.productName, "Pulsar X2");
+  assert.equal((device as HIDDevice & { openMouseTransport?: string }).openMouseTransport, "bridge");
   assert.equal(device.collections[0].inputReports[0].reportId, 8);
   assert.equal(device.opened, false);
 
@@ -60,15 +61,22 @@ test("drives a device end to end over the socket", async () => {
   await sending;
 
   const reports: number[][] = [];
-  device.addEventListener("inputreport", (event) => {
+  const onReport = (event: HIDInputReportEvent): void => {
     reports.push([event.reportId, event.data.byteLength, event.data.getUint8(0)]);
-  });
+  };
+  device.addEventListener("inputreport", onReport);
+  assert.equal(fake.sent[3].type, "listen");
+  fake.reply({ id: fake.sent[3].id, ok: true });
   fake.reply({ type: "inputreport", device: MOUSE.key, reportId: 8, data: [42, 7] });
   assert.deepEqual(reports, [[8, 2, 42]]);
 
   const feature = device.receiveFeatureReport(5);
-  fake.reply({ id: fake.sent[3].id, ok: true, data: [9, 9] });
+  fake.reply({ id: fake.sent[4].id, ok: true, data: [9, 9] });
   assert.equal((await feature).getUint8(1), 9);
+
+  device.removeEventListener("inputreport", onReport);
+  assert.equal(fake.sent[5].type, "unlisten");
+  fake.reply({ id: fake.sent[5].id, ok: true });
 
   // Stops the enumeration poll, which would otherwise hold the test open.
   fake.transport.onClose?.();
@@ -82,6 +90,22 @@ test("a rejected request surfaces the reason Bridge gave", async () => {
   fake.reply({ id: fake.sent[0].id, ok: false, error: "no interface answered" });
 
   await assert.rejects(listing, /no interface answered/);
+  fake.transport.onClose?.();
+});
+
+test("concurrent scans share one native enumeration request", async () => {
+  const fake = fakeTransport();
+  const hid = bridgeHid(fake.transport);
+
+  const first = hid.getDevices();
+  const second = hid.getDevices();
+  assert.equal(fake.sent.length, 1);
+  assert.equal(fake.sent[0].type, "list");
+  fake.reply({ id: fake.sent[0].id, ok: true, devices: [MOUSE] });
+
+  const [firstDevice] = await first;
+  const [secondDevice] = await second;
+  assert.equal(firstDevice, secondDevice);
   fake.transport.onClose?.();
 });
 

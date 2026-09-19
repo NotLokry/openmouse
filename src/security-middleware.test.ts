@@ -12,10 +12,10 @@ class FakeKV {
   }
 }
 
-async function guarded(request: Request, kv = new FakeKV()) {
+async function guarded(request: Request, kv = new FakeKV(), extraEnv: Record<string, unknown> = {}) {
   return onRequest({
     request,
-    env: { SECURITY_KV: kv },
+    env: { SECURITY_KV: kv, ...extraEnv },
     next: async () => new Response("passed-through", { status: 200 }),
   });
 }
@@ -30,7 +30,7 @@ test("the guard passes requests through when no SECURITY_KV binding is set", asy
   assert.equal(await response.text(), "passed-through");
 });
 
-test("the guard bypasses a permanently banned IP", async () => {
+test("the guard serves a red ban screen to a permanently banned IP", async () => {
   const kv = new FakeKV();
   await kv.put("ban:1.2.3.4", "1");
   const response = await guarded(
@@ -38,6 +38,72 @@ test("the guard bypasses a permanently banned IP", async () => {
     kv,
   );
   assert.equal(response.status, 403);
+  const body = await response.text();
+  assert.match(body, /<h1>You have been banned<\/h1>/);
+  assert.match(body, /Repeated automated abuse or exploit attempts/);
+  assert.match(body, /discordapp\.com\/channels\/1531814042421952644\/1545272715072639117/);
+});
+
+test("the guard says so when an IP was banned for artwork spam", async () => {
+  const kv = new FakeKV();
+  await kv.put("ban:203.0.113.9", "artwork");
+  const response = await guarded(
+    new Request("https://openmouse.app/", { headers: { "CF-Connecting-IP": "203.0.113.9" } }),
+    kv,
+  );
+  const body = await response.text();
+  assert.equal(response.status, 403);
+  assert.match(body, /Repeated artwork submissions were rejected/);
+});
+
+test("a banned IP can still reach the unban endpoint with the admin token", async () => {
+  const kv = new FakeKV();
+  await kv.put("ban:1.2.3.4", "artwork");
+  const response = await guarded(
+    new Request("https://openmouse.app/api/admin/unban", {
+      method: "POST",
+      headers: { "CF-Connecting-IP": "1.2.3.4", Authorization: "Bearer s3cret" },
+    }),
+    kv,
+    { ADMIN_TOKEN: "s3cret" },
+  );
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), "passed-through");
+});
+
+test("the admin token does not unlock the rest of the site for a banned IP", async () => {
+  const kv = new FakeKV();
+  await kv.put("ban:1.2.3.4", "artwork");
+  const response = await guarded(
+    new Request("https://openmouse.app/", {
+      headers: { "CF-Connecting-IP": "1.2.3.4", Authorization: "Bearer s3cret" },
+    }),
+    kv,
+    { ADMIN_TOKEN: "s3cret" },
+  );
+  assert.equal(response.status, 403);
+});
+
+test("a banned IP needs a valid and configured token to reach the unban endpoint", async () => {
+  const kv = new FakeKV();
+  await kv.put("ban:1.2.3.4", "artwork");
+  const post = (authorization: string | null) =>
+    new Request("https://openmouse.app/api/admin/unban", {
+      method: "POST",
+      headers: {
+        "CF-Connecting-IP": "1.2.3.4",
+        ...(authorization ? { Authorization: authorization } : {}),
+      },
+    });
+
+  const wrongToken = await guarded(post("Bearer nope"), kv, { ADMIN_TOKEN: "s3cret" });
+  assert.equal(wrongToken.status, 403);
+
+  const noToken = await guarded(post(null), kv, { ADMIN_TOKEN: "s3cret" });
+  assert.equal(noToken.status, 403);
+
+  const unconfigured = await guarded(post("Bearer s3cret"), kv);
+  assert.equal(unconfigured.status, 403);
 });
 
 test("the guard blocks exploit URLs and counts a strike", async () => {
@@ -102,5 +168,5 @@ test("repeated abuse permanently bans the IP", async () => {
     lastStatus = response.status;
   }
   assert.equal(lastStatus, 403);
-  assert.equal(await kv.get("ban:unknown"), "1");
+  assert.equal(await kv.get("ban:unknown"), "security");
 });

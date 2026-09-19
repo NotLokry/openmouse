@@ -9,13 +9,78 @@
 // missing binding.
 //
 // Keys:
-//   ban:<ip>                → "1", permanent until manually cleared
+//   ban:<ip>                → reason token ("security" | "artwork"); legacy
+//                             "1" is treated as "security"; permanent until
+//                             manually cleared
 //   strikes:<ip>            → count, refreshed TTL
 //   window:<ip>:<method>:<minute> → request count for the current minute
 //
 // Twisting this file into a DoS doesn't work: middleware runs before functions
 // and returns before any origin work is done. Rate counters self-expire, and a
 // cleared strike bucket can't clear a permanent ban.
+
+import { isAdminUnbanRequest } from "./_lib/admin.js";
+import { hardenResponse } from "./_lib/security-headers.js";
+
+const DISCORD_TICKET_URL = "https://discordapp.com/channels/1531814042421952644/1545272715072639117";
+
+const BAN_REASONS = {
+  security:
+    "Repeated automated abuse or exploit attempts were detected from this IP address. The ban is permanent.",
+  artwork:
+    "Repeated artwork submissions were rejected by the review system. The ban is permanent.",
+  default:
+    "This IP address is permanently blocked from OpenMouse.",
+};
+
+// Full-bleed ban screen for permanently banned IPs. A plain response would be
+// swallowed by the SPA's fetch handlers; this HTML renders as a standalone red
+// page on any navigation.
+const banPage = (reasonToken) => {
+  const reason = BAN_REASONS[reasonToken] ?? BAN_REASONS.default;
+  // The inline stylesheet needs a nonce because the canonical CSP has no
+  // 'unsafe-inline'. The ban page is a Function response, so it declares its
+  // own locked-down policy (no scripts, no external resources) instead of the
+  // site-wide one applied by hardenResponse.
+  const nonce = crypto.randomUUID().replace(/-/g, "");
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>You have been banned</title>
+<style nonce="${nonce}">
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+    background: #230707; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: #fff; text-align: center; padding: 2rem; }
+  .card { max-width: 34rem; }
+  h1 { font-size: clamp(2rem, 6vw, 3.25rem); font-weight: 900; letter-spacing: .05em;
+    text-transform: uppercase; color: #ff3b30; margin: 0 0 1.25rem;
+    text-shadow: 0 0 26px rgba(255, 59, 48, 0.5); }
+  .reason { font-size: 1.05rem; line-height: 1.6; color: #ffd9d6; margin: 0 0 2.25rem; }
+  a { display: inline-block; padding: .9rem 1.7rem; border-radius: 10px;
+    background: #5865f2; color: #fff; font-weight: 700; text-decoration: none; }
+  a:hover { background: #4752c4; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>You have been banned</h1>
+    <p class="reason">${reason}</p>
+    <a href="${DISCORD_TICKET_URL}" target="_blank" rel="noopener">Open a ticket on Discord</a>
+  </div>
+</body>
+</html>`;
+  return new Response(html, {
+    status: 403,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "Content-Security-Policy": `default-src 'none'; style-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+    },
+  });
+};
 
 // Built lazily inside the handler, not at module scope — constructing a
 // Response at global scope is exactly the kind of thing workerd's "no I/O
@@ -60,7 +125,7 @@ async function strike(kv, ip) {
   const current = Number((await kv.get(`strikes:${ip}`)) ?? "0");
   const next = current + 1;
   if (next >= STRIKES_TO_BAN) {
-    await kv.put(`ban:${ip}`, "1");
+    await kv.put(`ban:${ip}`, "security");
     return true;
   }
   await kv.put(`strikes:${ip}`, String(next), { expirationTtl: 7 * 24 * 3600 });
@@ -76,14 +141,25 @@ async function enforceRateLimit(kv, request, ip) {
   return count > cap;
 }
 
-export async function onRequest({ request, env, next }) {
+export async function onRequest(context) {
+  return hardenResponse(await handle(context));
+}
+
+async function handle({ request, env, next }) {
   const kv = env.SECURITY_KV;
   if (!kv) return next();
 
   const ip = clientIp(request);
-  if (await kv.get(`ban:${ip}`)) return block();
-
   const url = new URL(request.url);
+
+  // An admin who is themselves caught by a ban (shared/NAT IP) still has to
+  // reach the unban endpoint, so that one path is exempt — and only when the
+  // request carries the correct ADMIN_TOKEN, which the endpoint re-checks.
+  const banReason = await kv.get(`ban:${ip}`);
+  if (banReason && !isAdminUnbanRequest(request, env, url.pathname)) {
+    return banPage(banReason === "1" ? "security" : banReason);
+  }
+
   const method = request.method.toUpperCase();
 
   if (EXPLOIT_RE.test(url.href)) {

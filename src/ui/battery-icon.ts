@@ -1,4 +1,5 @@
 import type { MouseStatus } from "@openmouse/protocol/drivers/mouse-types";
+import { setSanitizedHtml } from "../trusted-types.ts";
 
 export type BatteryIconState = "charging" | "dead" | "low" | "ok" | "unknown";
 
@@ -96,7 +97,7 @@ export function renderBatteryIcon(
   const fill = svg?.querySelector<SVGRectElement>(".battery-fill");
   const sameShape = svg?.classList.contains(`is-${kind}`) === true && (level === null) === (fill === null);
   if (!sameShape) {
-    container.innerHTML = batteryIconMarkup(percent, state);
+    setSanitizedHtml(container, batteryIconMarkup(percent, state));
     return;
   }
   if (fill && level !== null) fill.setAttribute("width", batteryFillWidth(level).toFixed(2));

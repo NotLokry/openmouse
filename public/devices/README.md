@@ -187,7 +187,7 @@ package:
 - `logitech-mx-anywhere-3.png` — Logitech MX Anywhere 3 top-view render
 - `logitech-mx-ergo-s.png` — Logitech MX Ergo S top-view render
 - `razer-deathadder-v2.png` — Razer DeathAdder V2 (V2 / V2 Pro / Essential share the shell)
-- `razer-deathadder-v3.png` — Razer DeathAdder V3 render
+- `razer-deathadder-v3.png` — Razer DeathAdder V3 render (V3 Pro shares the shell)
 - `razer-deathadder-v4-pro.png` — Razer DeathAdder V4 Pro (Carbon Fiber SKU shares the shell)
 - `razer-viper-v3-hyperspeed.png` — Razer Viper V3 HyperSpeed render
 - `razer-viper-v4-pro.png` — Razer Viper V4 Pro render

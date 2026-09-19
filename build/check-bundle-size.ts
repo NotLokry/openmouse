@@ -115,7 +115,12 @@ const BUDGET_BYTES: Record<string, number> = {
   // through bridge-hid's SUPPORTED_HID_FILTERS, so this grows the bundle
   // even before the A7 V3 traits work (PR #267) references the new codec
   // directly. Measured aggregate is 1,545.7 kB, leaving ~24 kB of headroom.
-  ".js": 1_570_000,
+  // Raised to 1,600 kB for the strict artwork-submission flow: the expanded
+  // artreq.* dictionary (new rejection reasons, background/photo guidance, the
+  // failure lockout and Discord-ticket strings) ships in all ten locale
+  // tables, and ArtworkRequestDialog.tsx gained the per-IP failure-lockout
+  // logic. Measured aggregate is 1,578.2 kB, leaving ~22 kB of headroom.
+  ".js": 1_600_000,
 };
 
 const ASSETS = join("dist", "assets");

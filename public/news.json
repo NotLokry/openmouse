@@ -1,6 +1,6 @@
 {
   "id": "2026-09-razer-chrome-153",
-  "level": "warning",
-  "message": "Using a Razer mouse? A recent Chrome update may stop it from being detected. Learn more.",
+  "level": "critical",
+  "message": "Using a Razer mouse? A recent Chrome update can stop it from being detected. This is a known issue we're tracking - open the workaround guide.",
   "url": "https://openmouse.app/blog-razer-windows-chrome-153"
 }

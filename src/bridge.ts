@@ -80,6 +80,7 @@ export async function saveBridgeDefaultProfile(profile: BridgeProfile): Promise<
   });
 }
 
+
 export interface BridgeBatteryReading {
   deviceId: string;
   deviceName: string;

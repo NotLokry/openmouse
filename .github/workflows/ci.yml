@@ -37,8 +37,13 @@ jobs:
         run: |
           node <<'NODE'
           const { dependencies = {} } = require("./package.json");
+          const protocolVersion = dependencies["@openmouse/protocol"];
+          if (!/^\d+\.\d+\.\d+$/.test(protocolVersion)) {
+            console.error("Protocol dependency must be an exact stable npm version.");
+            process.exit(1);
+          }
           const approved = {
-            "@openmouse/protocol": "https://github.com/OpenMouse-Project/mouse-protocol.git",
+            "@openmouse/protocol": protocolVersion,
             "lucide-react": "^1.43.0",
             "preact": "^10.29.8",
           };
